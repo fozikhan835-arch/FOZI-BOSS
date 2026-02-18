@@ -1,129 +1,162 @@
 import os
-import json
+import re
+import time
 import asyncio
 import logging
-import re
 import requests
 import threading
-import time
-import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from bs4 import BeautifulSoup
-from flask import Flask, jsonify, request, render_template
+from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import func
-from werkzeug.middleware.proxy_fix import ProxyFix
 from telegram import Bot
 
 # ================================
-# CONFIGURATION - ADDED YOUR INFO
+# CONFIGURATION
 # ================================
-# Your Bot Name: @FOZIBOSSOTP_BOT
+# Apni details yahan bharein
 BOT_TOKEN = "8082347161:AAGj4CwsLctESyEZ1ZesyxNAYpwbFB7az7k"
-# IMPORTANT: Replace this with your actual Telegram Group ID
 GROUP_ID = "-1003862948715" 
 
-# IVASMS Credentials (You still need to provide these)
+# IVASMS Credentials
 IVASMS_EMAIL = "your-email@example.com"
 IVASMS_PASSWORD = "your-password"
 
 # ================================
-# FLASK & DATABASE SETUP
+# DATABASE SETUP
 # ================================
-
 class Base(DeclarativeBase):
     pass
 
 db = SQLAlchemy(model_class=Base)
 app = Flask(__name__)
-app.secret_key = "telegram-otp-bot-secret-key"
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///bot.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db.init_app(app)
 
-# Log Config
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# [ Models OTPLog and BotStats remain same as your original code ]
 class OTPLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    otp_code = db.Column(db.String(20), nullable=False)
-    phone_number = db.Column(db.String(20), nullable=True)
-    service_name = db.Column(db.String(100), nullable=True)
-    raw_message = db.Column(db.Text, nullable=True)
+    otp_code = db.Column(db.String(20))
+    phone_number = db.Column(db.String(20))
+    service_name = db.Column(db.String(100))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    sent_to_telegram = db.Column(db.Boolean, default=False)
-
-class BotStats(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    stat_name = db.Column(db.String(50), unique=True)
-    stat_value = db.Column(db.String(255))
-    last_updated = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ================================
-# LOGIC COMPONENTS
+# IVASMS SCRAPER LOGIC
 # ================================
-
-def extract_otp_from_text(text):
-    patterns = [r'\b(\d{4,6})\b', r'code[:\s]*(\d+)', r'otp[:\s]*(\d+)']
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match: return match.group(1)
-    return None
-
 class IVASMSScraper:
     def __init__(self, email, password):
         self.email = email
         self.password = password
         self.session = requests.Session()
+        self.base_url = "https://www.ivasms.com/portal"
         self.is_logged_in = False
 
     def login(self):
         try:
-            # Login logic to IVASMS
-            logger.info(f"Attempting login for {self.email}...")
-            # This is a placeholder for the actual login POST request
-            self.is_logged_in = True 
-            return True
+            login_url = f"{self.base_url}/login"
+            # Initial get to catch cookies
+            self.session.get(login_url)
+            payload = {'email': self.email, 'password': self.password}
+            response = self.session.post(login_url, data=payload)
+            if "dashboard" in response.url.lower() or response.status_code == 200:
+                self.is_logged_in = True
+                logger.info("✅ IVASMS Login Successful!")
+                return True
+            return False
         except Exception as e:
-            logger.error(f"Login error: {e}")
+            logger.error(f"❌ Login Failed: {e}")
             return False
 
-    def fetch_messages(self):
-        if not self.is_logged_in: self.login()
-        # Logic to scrape https://www.ivasms.com/portal/live/my_sms
-        return [] # Returns list of new OTP dicts
-
-class TelegramOTPBot:
-    def __init__(self, token, group_id):
-        self.bot = Bot(token=token)
-        self.group_id = group_id
-
-    async def send_otp_message(self, otp_data):
-        message = f"🔐 <b>New OTP: {otp_data['otp']}</b>\n📱 No: {otp_data['phone']}\n🌐 Service: {otp_data['service']}"
-        await self.bot.send_message(chat_id=self.group_id, text=message, parse_mode='HTML')
+    def fetch_latest_otps(self):
+        if not self.is_logged_in:
+            self.login()
+        
+        try:
+            # Live SMS page jahan OTP aate hain
+            resp = self.session.get(f"{self.base_url}/live/my_sms")
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            
+            # Yahan hum table rows (tr) dhund rahe hain
+            messages = []
+            rows = soup.find_all('tr')[1:] # Skip header
+            
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) >= 3:
+                    phone = cols[0].text.strip()
+                    msg_text = cols[1].text.strip()
+                    # OTP extract karne ke liye regex
+                    otp_match = re.search(r'\b\d{4,6}\b', msg_text)
+                    otp = otp_match.group(0) if otp_match else "N/A"
+                    
+                    messages.append({
+                        'phone': phone,
+                        'otp': otp,
+                        'service': "IVASMS Service"
+                    })
+            return messages
+        except Exception as e:
+            logger.error(f"❌ Fetch Error: {e}")
+            return []
 
 # ================================
-# EXECUTION
+# TELEGRAM & BACKGROUND TASK
 # ================================
+telegram_bot = Bot(token=BOT_TOKEN)
 
-@app.route('/')
-def index():
-    return "OTP Bot @FOZIBOSSOTP_BOT is Running!"
+async def send_to_telegram(otp_data):
+    text = (
+        f"🔐 *NEW OTP RECEIVED*\n\n"
+        f"📱 *Number:* `{otp_data['phone']}`\n"
+        f"🔢 *OTP Code:* `{otp_data['otp']}`\n"
+        f"🌐 *Service:* {otp_data['service']}\n"
+        f"⏰ *Time:* {datetime.now().strftime('%H:%M:%S')}"
+    )
+    try:
+        await telegram_bot.send_message(chat_id=GROUP_ID, text=text, parse_mode='Markdown')
+    except Exception as e:
+        logger.error(f"Telegram Send Error: {e}")
 
-def run_bot_loop():
-    # Loop that checks IVASMS every 30 seconds
+def run_scraper_loop():
+    scraper = IVASMSScraper(IVASMS_EMAIL, IVASMS_PASSWORD)
+    processed_otps = set() # Duplicate se bachne ke liye
+
     while True:
-        logger.info("Checking for new OTPs...")
-        time.sleep(30)
+        with app.app_context():
+            new_msgs = scraper.fetch_latest_otps()
+            for msg in new_msgs:
+                identifier = f"{msg['phone']}_{msg['otp']}"
+                if identifier not in processed_otps:
+                    # Save to DB
+                    new_entry = OTPLog(otp_code=msg['otp'], phone_number=msg['phone'], service_name=msg['service'])
+                    db.session.add(new_entry)
+                    db.session.commit()
+                    
+                    # Send to Telegram
+                    asyncio.run(send_to_telegram(msg))
+                    processed_otps.add(identifier)
+            
+        time.sleep(20) # 20 seconds ka wait
+
+# ================================
+# ROUTES
+# ================================
+@app.route('/')
+def home():
+    return "<h1>Bot is Active!</h1><p>Checking IVASMS for OTPs...</p>"
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     
-    # Start the scraper thread
-    threading.Thread(target=run_bot_loop, daemon=True).start()
+    # Background thread for scraper
+    threading.Thread(target=run_scraper_loop, daemon=True).start()
     
-    # Run Flask Web Dashboard
-    app.run(host='0.0.0.0', port=5000)
+    # Run Flask app
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
