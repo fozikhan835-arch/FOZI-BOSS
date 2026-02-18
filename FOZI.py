@@ -22,7 +22,7 @@ from telegram import Bot
 # Your Bot Name: @FOZIBOSSOTP_BOT
 BOT_TOKEN = "8082347161:AAGj4CwsLctESyEZ1ZesyxNAYpwbFB7az7k"
 # IMPORTANT: Replace this with your actual Telegram Group ID
-GROUP_ID = "YOUR_GROUP_ID_HERE" 
+GROUP_ID = "-1003862948715" 
 
 # IVASMS Credentials (You still need to provide these)
 IVASMS_EMAIL = "your-email@example.com"
