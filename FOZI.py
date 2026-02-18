@@ -17,7 +17,7 @@ from datetime import datetime
 
 # --- CONFIGURATION ---
 # Aapka GitHub RAW link
-APPROVAL_URL = "https://github.com/fozikhan835-arch/Aprowl.txt"
+APPROVAL_URL = "https://github.com/fozikhan835-arch/Aprowl.txt/blob/8d1bffa041fbd51336449819b3c052a4e088c9f6/Aprowl.txt"
 OWNER_NUMBER = "+923186757671"
 
 # Ensure required modules are installed
