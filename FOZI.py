@@ -852,8 +852,8 @@ except Exception as e:
 # Auto-start monitoring if credentials are available and bot controller is initialized
 if bot_controller and (os.environ.get("8082347161:AAGj4CwsLctESyEZ1ZesyxNAYpwbFB7az7k") and 
     os.environ.get("TELEGRAM_GROUP_ID") and 
-    os.environ.get("IVASMS_EMAIL") and 
-    os.environ.get("IVASMS_PASSWORD")):
+    os.environ.get("fozikhan835@gmail.com") and 
+    os.environ.get("khosa123")):
     
     # Start monitoring in a separate thread after a short delay
     def delayed_start():
